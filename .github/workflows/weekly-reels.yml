@@ -1,0 +1,47 @@
+name: Weekly reels (Bolte Sitare)
+# decision 429 — 12 English sign reels every Monday, sent to farooqstars.com; Studio 2 posts them (Facebook Reel + TikTok).
+# The site builds the new week's readings at 04:10 UTC on Monday; the first try is 05:30 UTC, then two more tries the same day
+# (a video already on the site is never made again, so a re-run only makes what is missing).
+on:
+  schedule:
+    - cron: '30 5 * * 1'
+    - cron: '30 8 * * 1'
+    - cron: '30 12 * * 1'
+  workflow_dispatch:
+    inputs:
+      signs: { description: "'' = all 12, or e.g. '0' or '0,3'", required: false, default: '' }
+      force: { description: "1 = make again and replace", required: false, default: '' }
+concurrency: { group: weekly-reels, cancel-in-progress: false }
+jobs:
+  reels:
+    runs-on: ubuntu-latest
+    timeout-minutes: 240
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: { node-version: '22' }
+      - uses: actions/setup-python@v5
+        with: { python-version: '3.12' }
+      - name: ffmpeg + emoji font
+        timeout-minutes: 10
+        run: |
+          sudo apt-get -o Acquire::Retries=3 update -y || true
+          sudo apt-get -o Acquire::Retries=3 install -y ffmpeg fonts-noto-color-emoji
+      - name: Voice model (Kokoro, free)
+        uses: actions/cache@v4
+        with: { path: kokoro, key: kokoro-v1.0 }
+      - name: Get the voice model if not cached
+        run: |
+          mkdir -p kokoro
+          for f in kokoro-v1.0.onnx voices-v1.0.bin; do [ -s kokoro/$f ] || curl -sSL --retry 3 -o kokoro/$f https://github.com/thewh1teagle/kokoro-onnx/releases/download/model-files-v1.0/$f; done
+          pip install -q -r requirements.txt
+      - name: Node + Chromium
+        run: |
+          npm install --no-audit --no-fund
+          npx playwright install --with-deps chromium
+      - name: Make and send the reels
+        env:
+          FS_REEL_KEY: ${{ secrets.FS_REEL_KEY }}
+          SIGNS: ${{ github.event.inputs.signs || '' }}
+          FORCE: ${{ github.event.inputs.force || '' }}
+        run: node make-reels.mjs
