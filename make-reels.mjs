@@ -19,11 +19,11 @@ const UA = 'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Geck
 const WORK = path.resolve('work'), OUT = path.resolve('out');
 if (!KEY && !DRY) { console.error('FS_REEL_KEY missing'); process.exit(2); }
 
-function dohaWeek(d = new Date()) {   // ISO week in Doha (UTC+3)
-  const t = new Date(d.getTime() + 3 * 3600e3); const day = (t.getUTCDay() + 6) % 7;
-  t.setUTCDate(t.getUTCDate() - day + 3); const y = t.getUTCFullYear();
-  const w = 1 + Math.round((t - Date.UTC(y, 0, 4)) / 864e5 / 7 - ((new Date(Date.UTC(y, 0, 4)).getUTCDay() + 6) % 7 - 3) / 7);
-  return `w-${y}-W${String(w).padStart(2, '0')}`;
+function dohaWeek(now = new Date()) {   // ISO week (Monday first) of the Doha day (UTC+3)
+  const t = new Date(now.getTime() + 3 * 3600e3), d = new Date(Date.UTC(t.getUTCFullYear(), t.getUTCMonth(), t.getUTCDate()));
+  d.setUTCDate(d.getUTCDate() + 3 - (d.getUTCDay() + 6) % 7);   // the Thursday of this week decides the year
+  const y = d.getUTCFullYear();
+  return `w-${y}-W${String(Math.floor((d - Date.UTC(y, 0, 1)) / 864e5 / 7) + 1).padStart(2, '0')}`;
 }
 const STAMP = process.env.STAMP || dohaWeek();
 const dur = f => +execFileSync('ffprobe', ['-v', 'error', '-show_entries', 'format=duration', '-of', 'csv=p=0', f]).toString().trim();
