@@ -14,8 +14,13 @@ on:
 jobs:
   reels:
     # one job per language, side by side (each ~12 × 8 min at 1440p)
-    strategy: { matrix: { lang: [en, es] }, fail-fast: false }
-    concurrency: { group: weekly-reels-${{ matrix.lang }}, cancel-in-progress: false }
+    strategy:
+      fail-fast: false
+      matrix:
+        lang: [en, es]
+    concurrency:
+      group: weekly-reels-${{ matrix.lang }}
+      cancel-in-progress: false
     runs-on: ubuntu-latest
     timeout-minutes: 300
     steps:
