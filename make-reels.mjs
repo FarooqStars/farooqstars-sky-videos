@@ -14,7 +14,7 @@ import { execFileSync } from 'child_process';
 
 const SITE = process.env.SITE || 'https://farooqstars.com', DRY = process.env.DRY === '1';   // DRY: make only, send nothing (a test)
 const KEY = process.env.FS_REEL_KEY || '';
-const SPEED = process.env.SPEED || '1.1';
+const SPEED = process.env.SPEED || '1.1', SCALE = +(process.env.SCALE || 4 / 3);
 const VOICES = { en: ['am_michael', 'en-us'], es: ['em_alex', 'es'] };   // free Kokoro voices (Farooq picked Michael for English)
 const LANGS = (process.env.LANGS || 'en,es').split(',').map(s => s.trim()).filter(l => VOICES[l]);
 const UA = 'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0 Safari/537.36';
@@ -56,7 +56,7 @@ async function post(form, L) {
   for (const si of todo) {
     const t0 = Date.now(), dir = path.join(WORK, 's' + si); fs.rmSync(dir, { recursive: true, force: true }); fs.mkdirSync(dir + '/f', { recursive: true });
     try {
-      const pg = await browser.newPage({ viewport: { width: 1080, height: 1920 } });
+      const pg = await browser.newPage({ viewport: { width: 1080, height: 1920 }, deviceScaleFactor: SCALE });   // 1440×2560: YouTube gives a 1440p upload its better encode, also at 1080p
       const open = async v => {
         await pg.goto(`${SITE}/reel-render.html?sign=${si}&stamp=${STAMP}&lang=${L}&sys=western${v ? '&v=' + v : ''}&t=${Date.now()}`, { waitUntil: 'load', timeout: 90000 });
         await pg.waitForFunction(() => window.REEL && (REEL.ready || REEL.error), null, { timeout: 90000 });
@@ -67,15 +67,21 @@ async function post(form, L) {
       const wavs = R.say.map((t, i) => { const w = `${dir}/v${i}.wav`; execFileSync('python3', ['kokoro-say.py', VOICES[L][0], SPEED, w, VOICES[L][1]], { input: t, stdio: ['pipe', 'ignore', 'inherit'] }); return w; });
       R = await open(wavs.map(w => dur(w).toFixed(2)).join(','));
       const st = await pg.$('#stage'), N = Math.ceil(R.dur * 30);
-      for (let i = 0; i < N; i++) { await pg.evaluate(t => REEL.seek(t), i / 30); await st.screenshot({ path: `${dir}/f/${String(i).padStart(5, '0')}.jpg`, type: 'jpeg', quality: 92 }); }
+      for (let i = 0; i < N; i++) { await pg.evaluate(t => REEL.seek(t), i / 30); await st.screenshot({ path: `${dir}/f/${String(i).padStart(5, '0')}.jpg`, type: 'jpeg', quality: 100 }); }   // q100: clean gold edges and dark gradients (30 Oct: YouTube looked weak)
       await pg.close();
       const D = R.dur.toFixed(2), out = path.join(OUT, `${STAMP}-${L}-${String(si).padStart(2, '0')}.mp4`);
       const args = ['-v', 'error', '-y', '-framerate', '30', '-i', `${dir}/f/%05d.jpg`, '-i', music]; wavs.forEach(w => args.push('-i', w));
       let fc = `[1:a]atrim=0:${D},afade=t=in:d=1.2,afade=t=out:st=${(R.dur - 2.5).toFixed(2)}:d=2.5,volume=0.22[m]`;
-      wavs.forEach((w, i) => { const ms = Math.round(R.at[i] * 1000); fc += `;[${i + 2}:a]aresample=44100,adelay=${ms}|${ms},volume=1.6[v${i}]`; });
-      fc += `;[m]${wavs.map((w, i) => `[v${i}]`).join('')}amix=inputs=${wavs.length + 1}:normalize=0,alimiter=limit=0.95[a]`;
-      args.push('-filter_complex', fc, '-map', '0:v', '-map', '[a]', '-c:v', 'libx264', '-preset', 'slow', '-crf', '19', '-pix_fmt', 'yuv420p', '-r', '30',
-        '-c:a', 'aac', '-b:a', '160k', '-ar', '44100', '-movflags', '+faststart', '-t', D, out);
+      wavs.forEach((w, i) => { const ms = Math.round(R.at[i] * 1000); fc += `;[${i + 2}:a]aresample=48000,adelay=${ms}|${ms},volume=1.6[v${i}]`; });
+      fc += `;[m]${wavs.map((w, i) => `[v${i}]`).join('')}amix=inputs=${wavs.length + 1}:normalize=0,alimiter=limit=0.95,aresample=48000[a]`;
+      // the picture: TV range (the frames are full-range JPEG — flagged wrong, players crush the dark sky), a fine grain so the dark gradient does not band
+      fc += ';[0:v]scale=in_range=pc:out_range=tv:flags=lanczos,noise=alls=2:allf=t,format=yuv420p[vo]';
+      // 30 Oct: was ~1.1 Mbit/s (CRF 19 on a dark, mostly flat picture) — YouTube re-compresses such a file badly. Now ~6–8 Mbit/s (YouTube's 1080p advice),
+      // a keyframe every 2 s, BT.709 tags; stays under TikTok's 64 MB single upload for a 60 s reel.
+      args.push('-filter_complex', fc, '-map', '[vo]', '-map', '[a]', '-c:v', 'libx264', '-preset', 'slow', '-tune', 'animation', '-crf', '15', '-maxrate', '8M', '-bufsize', '16M',
+        '-g', '60', '-profile:v', 'high', '-level', '5.1', '-pix_fmt', 'yuv420p', '-r', '30',
+        '-colorspace', 'bt709', '-color_primaries', 'bt709', '-color_trc', 'bt709', '-color_range', 'tv',
+        '-c:a', 'aac', '-b:a', '192k', '-ar', '48000', '-movflags', '+faststart', '-t', D, out);
       execFileSync('ffmpeg', args, { stdio: 'inherit' });
       const up = DRY ? { ok: true } : await post({ action: 'save', si: String(si), caption: R.caption, sec: D, video: new Blob([fs.readFileSync(out)], { type: 'video/mp4' }) }, L);
       console.log(`${L} sign ${si}: ${D}s · ${(fs.statSync(out).size / 1048576).toFixed(1)} MB · ${Math.round((Date.now() - t0) / 1000)}s ·`, up.ok ? 'sent ✓' : 'NOT SENT ' + up.err);
